@@ -43,7 +43,7 @@ using namespace amcl;
 // Default constructor
 AMCLLaser::AMCLLaser(size_t max_beams, map_t* map) : AMCLSensor(), 
 						     max_samples(0), max_obs(0), 
-						     temp_obs(NULL)
+						     temp_obs(NULL), skipped_beam_count(0)
 {
   this->time = 0.0;
 
@@ -457,6 +457,7 @@ double AMCLLaser::LikelihoodFieldModelProb(AMCLLaserData *data, pf_sample_set_t*
 	skipped_beam_count++; 
       }
     }
+    self->skipped_beam_count = skipped_beam_count;
 
     //we check if there is at least a critical number of beams that agreed with the map 
     //otherwise it probably indicates that the filter converged to a wrong solution
@@ -466,7 +467,8 @@ double AMCLLaser::LikelihoodFieldModelProb(AMCLLaserData *data, pf_sample_set_t*
 
     if(skipped_beam_count >= (beam_ind * self->beam_skip_error_threshold)){
       fprintf(stderr, "Over %f%% of the observations were not in the map - pf may have converged to wrong pose - integrating all observations\n", (100 * self->beam_skip_error_threshold));
-      error = true; 
+      error = true;
+      self->skipped_beam_count = skipped_beam_count;
     }
 
     for (j = 0; j < set->sample_count; j++)

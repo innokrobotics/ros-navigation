@@ -94,6 +94,8 @@ class AMCLLaser : public AMCLSensor
   public: void SetLaserPose(pf_vector_t& laser_pose) 
           {this->laser_pose = laser_pose;}
 
+  public: int GetSkippedBeamCount() {return this->skipped_beam_count;}
+
   // Determine the probability for the given pose
   private: static double BeamModel(AMCLLaserData *data, 
                                    pf_sample_set_t* set);
@@ -133,6 +135,7 @@ class AMCLLaser : public AMCLSensor
   private: int max_samples;
   private: int max_obs;
   private: double **temp_obs;
+  private: int skipped_beam_count;
 
   // Laser model params
   //

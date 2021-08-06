@@ -52,6 +52,8 @@
 #include "nav_msgs/GetMap.h"
 #include "nav_msgs/SetMap.h"
 #include "std_srvs/Empty.h"
+#include "std_msgs/Float32.h"
+
 
 // For transform support
 #include "tf2/LinearMath/Transform.h"
@@ -200,6 +202,7 @@ class AmclNode
 
     geometry_msgs::PoseWithCovarianceStamped last_published_pose;
 
+
     map_t* map_;
     char* mapdata;
     int sx, sy;
@@ -250,6 +253,7 @@ class AmclNode
     ros::NodeHandle private_nh_;
     ros::Publisher pose_pub_;
     ros::Publisher particlecloud_pub_;
+    ros::Publisher skipped_beam_ratio_pub_;
     ros::ServiceServer global_loc_srv_;
     ros::ServiceServer nomotion_update_srv_; //to let amcl update samples without requiring motion
     ros::ServiceServer set_map_srv_;
@@ -261,6 +265,8 @@ class AmclNode
     double std_warn_level_x_;
     double std_warn_level_y_;
     double std_warn_level_yaw_;
+    int skipped_beam_count_ = 0;
+
 
     amcl_hyp_t* initial_pose_hyp_;
     bool first_map_received_;
@@ -472,6 +478,8 @@ AmclNode::AmclNode() :
 
   pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("amcl_pose", 2, true);
   particlecloud_pub_ = nh_.advertise<geometry_msgs::PoseArray>("particlecloud", 2, true);
+  skipped_beam_ratio_pub_ = nh_.advertise<std_msgs::Float32>("skipped_beam_ratio", 2, true);
+  
   global_loc_srv_ = nh_.advertiseService("global_localization", 
 					 &AmclNode::globalLocalizationCallback,
                                          this);
@@ -1310,6 +1318,8 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
 
     lasers_[laser_index]->UpdateSensor(pf_, (AMCLSensorData*)&ldata);
 
+    skipped_beam_count_ = lasers_[laser_index]->GetSkippedBeamCount();
+
     lasers_update_[laser_index] = false;
 
     pf_odom_pose_ = pose;
@@ -1428,6 +1438,10 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
 
       pose_pub_.publish(p);
       last_published_pose = p;
+      std_msgs::Float32 float_msg;
+      float_msg.data = (float)skipped_beam_count_ / (float)max_beams_;
+
+      skipped_beam_ratio_pub_.publish(float_msg);
 
       ROS_DEBUG("New pose: %6.3f %6.3f %6.3f",
                hyps[max_weight_hyp].pf_pose_mean.v[0],
@@ -1623,6 +1637,11 @@ AmclNode::standardDeviationDiagnostics(diagnostic_updater::DiagnosticStatusWrapp
   diagnostic_status.add("std_warn_level_x", std_warn_level_x_);
   diagnostic_status.add("std_warn_level_y", std_warn_level_y_);
   diagnostic_status.add("std_warn_level_yaw", std_warn_level_yaw_);
+  diagnostic_status.add("skipped_beam_count", skipped_beam_count_);
+  diagnostic_status.add("max_beams", max_beams_);
+  diagnostic_status.add("skipped_beams_ratio", (float)skipped_beam_count_ / (float)max_beams_);
+
+
 
   if (std_x > std_warn_level_x_ || std_y > std_warn_level_y_ || std_yaw > std_warn_level_yaw_)
   {
