@@ -1438,10 +1438,7 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
 
       pose_pub_.publish(p);
       last_published_pose = p;
-      std_msgs::Float32 float_msg;
-      float_msg.data = (float)skipped_beam_count_ / (float)max_beams_;
 
-      skipped_beam_ratio_pub_.publish(float_msg);
 
       ROS_DEBUG("New pose: %6.3f %6.3f %6.3f",
                hyps[max_weight_hyp].pf_pose_mean.v[0],
@@ -1509,6 +1506,7 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
       tmp_tf_stamped.child_frame_id = odom_frame_id_;
       tf2::convert(latest_tf_.inverse(), tmp_tf_stamped.transform);
       this->tfb_->sendTransform(tmp_tf_stamped);
+
     }
 
     // Is it time to save our last pose to the param server
@@ -1520,6 +1518,10 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
       save_pose_last_time = now;
     }
   }
+
+  std_msgs::Float32 float_msg;
+  float_msg.data = (float)skipped_beam_count_ / (float)max_beams_;
+  skipped_beam_ratio_pub_.publish(float_msg);
 
   diagnosic_updater_.update();
 }
