@@ -399,6 +399,7 @@ AmclNode::AmclNode() :
   {
     private_nh_.param("beam_skip_error_threshold", beam_skip_error_threshold_, 0.9);
   }
+  ROS_ERROR("beam_skip_error_threshold: %f", beam_skip_error_threshold_);
 
   private_nh_.param("laser_z_hit", z_hit_, 0.95);
   private_nh_.param("laser_z_short", z_short_, 0.1);
@@ -879,6 +880,8 @@ AmclNode::mapReceived(const nav_msgs::OccupancyGridConstPtr& msg)
 void
 AmclNode::handleMapMessage(const nav_msgs::OccupancyGrid& msg)
 {
+  ros::WallTime start_time = ros::WallTime::now();
+  ROS_INFO("Start processing map message at: %.3f", start_time.toSec());
   boost::recursive_mutex::scoped_lock cfl(configuration_mutex_);
 
   ROS_INFO("Received a %d X %d map @ %.3f m/pix\n",
@@ -898,16 +901,27 @@ AmclNode::handleMapMessage(const nav_msgs::OccupancyGrid& msg)
   lasers_update_.clear();
   frame_to_laser_.clear();
 
+  ros::WallTime cleaning_time = ros::WallTime::now();
+  ROS_INFO("Cleaning took %.3f sec", (cleaning_time - start_time).toSec());
+
   map_ = convertMap(msg);
 
+  ros::WallTime convert_time = ros::WallTime::now();
+  ROS_INFO("Conversion took %.3f sec", (convert_time - cleaning_time).toSec());
+
 #if NEW_UNIFORM_SAMPLING
+  int delta = 2;
   // Index of free space
   free_space_indices.resize(0);
-  for(int i = 0; i < map_->size_x; i++)
-    for(int j = 0; j < map_->size_y; j++)
+  for(int i = 0; i < map_->size_x; i+=delta)
+    for(int j = 0; j < map_->size_y; j+=delta)
       if(map_->cells[MAP_INDEX(map_,i,j)].occ_state == -1)
         free_space_indices.push_back(std::make_pair(i,j));
 #endif
+
+  ros::WallTime end_time = ros::WallTime::now();
+  ROS_INFO("Map handling took %.3f sec", (end_time - start_time).toSec());
+
   // Create the particle filter
   pf_ = pf_alloc(min_particles_, max_particles_,
                  alpha_slow_, alpha_fast_,

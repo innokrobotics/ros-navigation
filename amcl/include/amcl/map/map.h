@@ -49,7 +49,7 @@ typedef struct
   int occ_state;
 
   // Distance to the nearest occupied cell
-  double occ_dist;
+  float occ_dist;
 
   // Wifi levels
   //int wifi_levels[MAP_WIFI_MAX_LEVELS];
