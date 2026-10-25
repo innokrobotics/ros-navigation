@@ -1,0 +1,15 @@
+<?xml version="1.0" ?>
+<launch>
+    <node pkg="amcl" type="amcl" name="amcl" respawn="false" output="screen">
+      <param name="use_map_topic" value="true"/>
+      <param name="laser_model_type" value="likelihood_field"/>
+      <param name="min_particles" value="500"/>
+      <param name="max_particles" value="2000"/>
+      <param name="update_min_d" value="0.0"/>
+      <param name="update_min_a" value="0.0"/>
+      <param name="resample_interval" value="1"/>
+    </node>
+    <test time-limit="60" test-name="rotated_map_localization" pkg="amcl" type="rotated_map_localization.py">
+      <param name="map_yaw" value="0.6"/>
+    </test>
+</launch>
