@@ -160,6 +160,9 @@ if(CATKIN_ENABLE_TESTING)
     MD5 b61694296e08965096c5e78611fd9765)
 
   # Tests
+  catkin_add_gtest(map_rotation_test test/map_rotation_test.cpp)
+  target_link_libraries(map_rotation_test amcl_pf)
+
   add_rostest(test/set_initial_pose.xml)
   add_rostest(test/set_initial_pose_delayed.xml)
   add_rostest(test/basic_localization_stage.xml)
@@ -169,4 +172,6 @@ if(CATKIN_ENABLE_TESTING)
   add_rostest(test/texas_greenroom_loop.xml)
   add_rostest(test/rosie_multilaser.xml)
   add_rostest(test/texas_willow_hallway_loop.xml)
+  add_rostest(test/rotated_map_localization.xml)
+  add_rostest(test/rotated_map_localization_negative.xml)
 endif()

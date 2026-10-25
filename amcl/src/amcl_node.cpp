@@ -33,6 +33,7 @@
 #include <signal.h>
 
 #include "amcl/map/map.h"
+#include "amcl/map/map_rotation.h"
 #include "amcl/pf/pf.h"
 #include "amcl/sensors/amcl_odom.h"
 #include "amcl/sensors/amcl_laser.h"
@@ -204,6 +205,8 @@ class AmclNode
 
 
     map_t* map_;
+    // rotation of the map grid in the global frame; the filter runs in the grid frame
+    amcl::MapRotation map_rotation_;
     char* mapdata;
     int sx, sy;
     double resolution;
@@ -626,7 +629,7 @@ void AmclNode::reconfigureCB(AMCLConfig &config, uint32_t level)
   pf_init_pose_cov.m[0][0] = last_published_pose.pose.covariance[6*0+0];
   pf_init_pose_cov.m[1][1] = last_published_pose.pose.covariance[6*1+1];
   pf_init_pose_cov.m[2][2] = last_published_pose.pose.covariance[6*5+5];
-  pf_init(pf_, pf_init_pose_mean, pf_init_pose_cov);
+  pf_init(pf_, map_rotation_.toGrid(pf_init_pose_mean), map_rotation_.toGrid(pf_init_pose_cov));
   pf_init_ = false;
 
   // Instantiate the sensor objects
@@ -899,6 +902,11 @@ AmclNode::handleMapMessage(const nav_msgs::OccupancyGrid& msg)
   frame_to_laser_.clear();
 
   map_ = convertMap(msg);
+  map_rotation_ = amcl::MapRotation(tf2::getYaw(msg.info.origin.orientation),
+                                    msg.info.origin.position.x,
+                                    msg.info.origin.position.y);
+  if(!map_rotation_.isIdentity())
+    ROS_INFO("Map is rotated by %.4f rad around its origin", map_rotation_.yaw());
 
 #if NEW_UNIFORM_SAMPLING
   // Index of free space
@@ -927,7 +935,8 @@ AmclNode::handleMapMessage(const nav_msgs::OccupancyGrid& msg)
   pf_init_pose_cov.m[0][0] = init_cov_[0];
   pf_init_pose_cov.m[1][1] = init_cov_[1];
   pf_init_pose_cov.m[2][2] = init_cov_[2];
-  pf_init(pf_, pf_init_pose_mean, pf_init_pose_cov);
+  // initial pose parameters are given in the global frame
+  pf_init(pf_, map_rotation_.toGrid(pf_init_pose_mean), map_rotation_.toGrid(pf_init_pose_cov));
   pf_init_ = false;
 
   // Instantiate the sensor objects
@@ -1352,11 +1361,12 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
       cloud_msg.poses.resize(set->sample_count);
       for(int i=0;i<set->sample_count;i++)
       {
-        cloud_msg.poses[i].position.x = set->samples[i].pose.v[0];
-        cloud_msg.poses[i].position.y = set->samples[i].pose.v[1];
+        pf_vector_t sample_pose = map_rotation_.toGlobal(set->samples[i].pose);
+        cloud_msg.poses[i].position.x = sample_pose.v[0];
+        cloud_msg.poses[i].position.y = sample_pose.v[1];
         cloud_msg.poses[i].position.z = 0;
         tf2::Quaternion q;
-        q.setRPY(0, 0, set->samples[i].pose.v[2]);
+        q.setRPY(0, 0, sample_pose.v[2]);
         tf2::convert(q, cloud_msg.poses[i].orientation);
       }
       particlecloud_pub_.publish(cloud_msg);
@@ -1406,19 +1416,23 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
          puts("");
        */
 
+      // hypotheses are in the grid frame, publish in the global frame
+      pf_vector_t pose_mean = map_rotation_.toGlobal(hyps[max_weight_hyp].pf_pose_mean);
+
       geometry_msgs::PoseWithCovarianceStamped p;
       // Fill in the header
       p.header.frame_id = global_frame_id_;
       p.header.stamp = laser_scan->header.stamp;
       // Copy in the pose
-      p.pose.pose.position.x = hyps[max_weight_hyp].pf_pose_mean.v[0];
-      p.pose.pose.position.y = hyps[max_weight_hyp].pf_pose_mean.v[1];
+      p.pose.pose.position.x = pose_mean.v[0];
+      p.pose.pose.position.y = pose_mean.v[1];
 
       tf2::Quaternion q;
-      q.setRPY(0, 0, hyps[max_weight_hyp].pf_pose_mean.v[2]);
+      q.setRPY(0, 0, pose_mean.v[2]);
       tf2::convert(q, p.pose.pose.orientation);
       // Copy in the covariance, converting from 3-D to 6-D
       pf_sample_set_t* set = pf_->sets + pf_->current_set;
+      pf_matrix_t set_cov = map_rotation_.toGlobal(set->cov);
       for(int i=0; i<2; i++)
       {
         for(int j=0; j<2; j++)
@@ -1426,13 +1440,13 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
           // Report the overall filter covariance, rather than the
           // covariance for the highest-weight cluster
           //p.covariance[6*i+j] = hyps[max_weight_hyp].pf_pose_cov.m[i][j];
-          p.pose.covariance[6*i+j] = set->cov.m[i][j];
+          p.pose.covariance[6*i+j] = set_cov.m[i][j];
         }
       }
       // Report the overall filter covariance, rather than the
       // covariance for the highest-weight cluster
       //p.covariance[6*5+5] = hyps[max_weight_hyp].pf_pose_cov.m[2][2];
-      p.pose.covariance[6*5+5] = set->cov.m[2][2];
+      p.pose.covariance[6*5+5] = set_cov.m[2][2];
 
       /*
          printf("cov:\n");
@@ -1449,18 +1463,18 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
 
 
       ROS_DEBUG("New pose: %6.3f %6.3f %6.3f",
-               hyps[max_weight_hyp].pf_pose_mean.v[0],
-               hyps[max_weight_hyp].pf_pose_mean.v[1],
-               hyps[max_weight_hyp].pf_pose_mean.v[2]);
+               pose_mean.v[0],
+               pose_mean.v[1],
+               pose_mean.v[2]);
 
       // subtracting base to odom from map to base and send map to odom instead
       geometry_msgs::PoseStamped odom_to_map;
       try
       {
         tf2::Quaternion q;
-        q.setRPY(0, 0, hyps[max_weight_hyp].pf_pose_mean.v[2]);
-        tf2::Transform tmp_tf(q, tf2::Vector3(hyps[max_weight_hyp].pf_pose_mean.v[0],
-                                              hyps[max_weight_hyp].pf_pose_mean.v[1],
+        q.setRPY(0, 0, pose_mean.v[2]);
+        tf2::Transform tmp_tf(q, tf2::Vector3(pose_mean.v[0],
+                                              pose_mean.v[1],
                                               0.0));
 
         geometry_msgs::PoseStamped tmp_tf_stamped;
@@ -1626,7 +1640,9 @@ AmclNode::applyInitialPose()
 {
   boost::recursive_mutex::scoped_lock cfl(configuration_mutex_);
   if( initial_pose_hyp_ != NULL && map_ != NULL ) {
-    pf_init(pf_, initial_pose_hyp_->pf_pose_mean, initial_pose_hyp_->pf_pose_cov);
+    // initial_pose_hyp_ is in the global frame, the filter runs in the grid frame
+    pf_init(pf_, map_rotation_.toGrid(initial_pose_hyp_->pf_pose_mean),
+            map_rotation_.toGrid(initial_pose_hyp_->pf_pose_cov));
     pf_init_ = false;
 
     delete initial_pose_hyp_;
