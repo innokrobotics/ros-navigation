@@ -629,6 +629,12 @@ void AmclNode::reconfigureCB(AMCLConfig &config, uint32_t level)
   pf_init_pose_cov.m[0][0] = last_published_pose.pose.covariance[6*0+0];
   pf_init_pose_cov.m[1][1] = last_published_pose.pose.covariance[6*1+1];
   pf_init_pose_cov.m[2][2] = last_published_pose.pose.covariance[6*5+5];
+  if(!map_rotation_.isIdentity())
+  {
+    // on a rotated map the global covariance carries the filter's x/y spread in its off-diagonals
+    pf_init_pose_cov.m[0][1] = last_published_pose.pose.covariance[6*0+1];
+    pf_init_pose_cov.m[1][0] = last_published_pose.pose.covariance[6*1+0];
+  }
   pf_init(pf_, map_rotation_.toGrid(pf_init_pose_mean), map_rotation_.toGrid(pf_init_pose_cov));
   pf_init_ = false;
 

@@ -11,7 +11,7 @@ import math
 import sys
 import unittest
 
-import numpy as np
+import PyKDL
 import rospy
 import rostest
 import tf2_ros
@@ -19,7 +19,6 @@ from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion, TransformSt
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import LaserScan
 from std_srvs.srv import Empty
-from tf.transformations import euler_from_quaternion, quaternion_from_euler
 
 ORIGIN_X, ORIGIN_Y, RESOLUTION, SIZE = 2.0, 3.0, 0.05, 240
 
@@ -28,14 +27,28 @@ def rotate(x, y, angle):
     return x * math.cos(angle) - y * math.sin(angle), x * math.sin(angle) + y * math.cos(angle)
 
 
+def yaw_to_quaternion(yaw):
+    return Quaternion(*PyKDL.Rotation.RPY(0, 0, yaw).GetQuaternion())
+
+
+def quaternion_to_yaw(q):
+    return PyKDL.Rotation.Quaternion(q.x, q.y, q.z, q.w).GetRPY()[2]
+
+
 def make_grid():
-    grid = np.zeros((SIZE, SIZE), dtype=np.int8)  # [row = y, col = x]
-    grid[0, :] = grid[-1, :] = grid[:, 0] = grid[:, -1] = 100
+    grid = [[0] * SIZE for _ in range(SIZE)]  # grid[row = y][col = x]
+
+    def wall(rows, cols):
+        for r in rows:
+            for c in cols:
+                grid[r][c] = 100
+    wall([0, SIZE - 1], range(SIZE))
+    wall(range(SIZE), [0, SIZE - 1])
     # some asymmetric structure so the pose is unique
-    grid[60:140, 80] = 100
-    grid[150, 30:120] = 100
-    grid[40:70, 170:200] = 100
-    grid[180:200, 150:160] = 100
+    wall(range(60, 140), [80])
+    wall([150], range(30, 120))
+    wall(range(40, 70), range(170, 200))
+    wall(range(180, 200), range(150, 160))
     return grid
 
 
@@ -59,7 +72,7 @@ class TestRotatedMapLocalization(unittest.TestCase):
                 r += RESOLUTION / 2
                 cx = int((grid_x + r * math.cos(angle) - ORIGIN_X) / RESOLUTION)
                 cy = int((grid_y + r * math.sin(angle) - ORIGIN_Y) / RESOLUTION)
-                if not (0 <= cx < SIZE and 0 <= cy < SIZE) or self.grid[cy, cx] == 100:
+                if not (0 <= cx < SIZE and 0 <= cy < SIZE) or self.grid[cy][cx] == 100:
                     break
             ranges.append(r)
         return ranges
@@ -80,8 +93,8 @@ class TestRotatedMapLocalization(unittest.TestCase):
         grid_msg.info.width = grid_msg.info.height = SIZE
         grid_msg.info.origin.position.x = ORIGIN_X
         grid_msg.info.origin.position.y = ORIGIN_Y
-        grid_msg.info.origin.orientation = Quaternion(*quaternion_from_euler(0, 0, self.yaw))
-        grid_msg.data = self.grid.flatten().tolist()
+        grid_msg.info.origin.orientation = yaw_to_quaternion(self.yaw)
+        grid_msg.data = [cell for row in self.grid for cell in row]
         map_pub.publish(grid_msg)
 
         static_tf = tf2_ros.StaticTransformBroadcaster()
@@ -101,7 +114,7 @@ class TestRotatedMapLocalization(unittest.TestCase):
         initial.header.frame_id = "map"
         initial.pose.pose.position.x = true_x + 0.25
         initial.pose.pose.position.y = true_y - 0.2
-        initial.pose.pose.orientation = Quaternion(*quaternion_from_euler(0, 0, true_theta + 0.08))
+        initial.pose.pose.orientation = yaw_to_quaternion(true_theta + 0.08)
         initial.pose.covariance[6 * 0 + 0] = initial.pose.covariance[6 * 1 + 1] = 0.1
         initial.pose.covariance[6 * 5 + 5] = 0.05
         initial_pose_pub.publish(initial)
@@ -126,7 +139,7 @@ class TestRotatedMapLocalization(unittest.TestCase):
 
         self.assertIsNotNone(self.last_pose, "no amcl_pose received")
         p = self.last_pose
-        theta = euler_from_quaternion([p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w])[2]
+        theta = quaternion_to_yaw(p.orientation)
         theta_error = (theta - true_theta + math.pi) % (2 * math.pi) - math.pi
         self.assertLess(math.hypot(p.position.x - true_x, p.position.y - true_y), 0.05)
         self.assertLess(abs(theta_error), math.radians(1.5))
